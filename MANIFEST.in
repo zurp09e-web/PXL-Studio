@@ -1,0 +1,21 @@
+include native/pxl_native.cpp
+include native/pxl_v8.cpp
+include native/pxl_v8_msvc_avx2.cpp
+include native/pxl_v8_msvc_avx512.cpp
+include CMakeLists.txt
+include build_native.py
+include build_native.bat
+include build_native.sh
+include README.md
+include BUILDING.md
+include FORMAT_SPEC.md
+recursive-include tests *.py *.pxl *.png
+
+include pxl7_hdr.py
+include requirements-hdr.txt
+include CHANGELOG_7.0.md
+include TESTING_7.0.md
+
+recursive-include benchmarks_v80 *.py *.md *.csv
+include CHANGELOG_8.0.md
+include TESTING_8.0.md

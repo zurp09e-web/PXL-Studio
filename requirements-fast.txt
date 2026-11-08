@@ -1,0 +1,2 @@
+# Optional: only needed if Numba was omitted from the base install.
+numba>=0.59
