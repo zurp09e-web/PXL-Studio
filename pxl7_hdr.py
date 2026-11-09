@@ -457,11 +457,16 @@ def decompress(input_path, output_path, progress=None, backend="auto", workers=N
                 + MAX_EMBEDDED_ARCHIVE_OVERHEAD
             )
             aggregate_bytes_read = 0
-            for i in range(plane_count):
+            # The format stores the complete plane table before any payload.
+            # This table is tiny (two or four entries), so keep it in memory
+            # while streaming each potentially large embedded archive.
+            entries = []
+            for _ in range(plane_count):
                 entry = f.read(PLANE_ENTRY.size)
                 if len(entry) != PLANE_ENTRY.size:
                     raise ValueError("Truncated PXL v7 plane table")
-                length, expected_crc = PLANE_ENTRY.unpack(entry)
+                entries.append(PLANE_ENTRY.unpack(entry))
+            for i, (length, expected_crc) in enumerate(entries):
                 max_plane_archive = width * height * channels + MAX_EMBEDDED_ARCHIVE_OVERHEAD
                 if length < 1 or length > max_plane_archive:
                     raise ValueError("PXL v7 embedded plane exceeds safety limit")
