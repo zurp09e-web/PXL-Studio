@@ -1,0 +1,59 @@
+name: Decoder security checks
+
+on:
+  push:
+    branches:
+      - security/harden-v8-decoder
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite:
+    name: Full test suite (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+      - name: Build native backend
+        run: python build_native.py
+      - name: Run complete test suite
+        run: python -m pytest tests -q
+
+  native-sanitizers:
+    name: Native parser regression tests (ASan + UBSan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-dev.txt
+      - name: Build native backend with sanitizers
+        run: >
+          g++ -O1 -g -std=c++17 -fsanitize=address,undefined
+          -fno-omit-frame-pointer -fPIC -shared -pthread
+          native/pxl_native.cpp native/pxl_v8.cpp
+          -o libpxl_native.so
+      - name: Run malformed native decoder tests under sanitizers
+        env:
+          LD_PRELOAD: /usr/lib/gcc/x86_64-linux-gnu/$(gcc -dumpversion)/libasan.so
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: >
+          python -m pytest tests/test_native_cpp.py -q
+          -k "mixed_context_decoder_rejects_frequency_sum_overflow or
+          native_pixel_lz_rejects_uint64_varint_overflow or
+          native_variable_blocks_reject_uint64_varint_overflow"
