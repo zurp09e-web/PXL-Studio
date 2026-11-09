@@ -245,3 +245,30 @@ def test_python_fallback_variable_blocks_emit_delta_references():
         tokens = encoder.encode(cur_bytes, 64, 64)
         assert tokens[0] == 2 and tokens[1] in (1, 2)
         assert decoder.decode(tokens, 64, 64) == cur_bytes
+
+
+def _mixed_rans_blob_with_first_context(table: bytes) -> bytes:
+    # The one-channel model has 17 contexts. Context zero is deliberately
+    # malformed; the remaining contexts are absent, as allowed by the format.
+    contexts = 17
+    blob = bytearray((contexts,))
+    for context in range(contexts):
+        entry = table if context == 0 else b""
+        blob.extend(len(entry).to_bytes(2, "little"))
+        blob.extend(entry)
+    blob.extend((1 << 23).to_bytes(4, "little"))
+    return bytes(blob)
+
+
+@pytest.mark.parametrize("table", [
+    b"\\x00" + (2049).to_bytes(2, "little") + (2048).to_bytes(2, "little")
+    + bytes(252 * 2),
+    b"\\x01\\x02\\x00\\x81\\x10\\x01\\x80\\x10",
+], ids=["dense-frequency-overflow", "sparse-frequency-overflow"])
+def test_cpp_mixed_context_decoder_rejects_frequency_sum_overflow(table):
+    backend = native_backend()
+    # width=height=channels=1 produces two filtered bytes. The corrupted
+    # model sums to 4097, one past the fixed 4096-entry rANS decode table.
+    blob = _mixed_rans_blob_with_first_context(table)
+    with pytest.raises(ValueError, match="mixed-context stream"):
+        backend.mixed_rans_decode(blob, output_size=2, width=1, height=1, channels=1)
