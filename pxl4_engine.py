@@ -39,6 +39,9 @@ CODEC_PRED2D_MIXED = 26
 CODEC_BLOCK2D_VAR = 27
 V8_TILE_HEADER = struct.Struct("<IIHHBBIII")  # x,y,w,h,codec,transform,payload,decoded,crc
 V8_GROUP_INTERVAL = 8
+# The encoder accepts checkpoint intervals up to 256; reject archives that
+# claim longer history groups before buffering unbounded tile payloads.
+V8_GROUP_MAX_TILES = 256
 
 # Limits for the cross-tile reference state. These are part of v4 semantics.
 PIXEL_HISTORY_BYTES = 512 * 1024
@@ -2109,6 +2112,10 @@ def _validate_v8_partition(regions, width, height):
 def _write_tile_v8(f, tx, ty, tw, th, codec, transform, payload, decoded_size):
     if len(payload) > core.MAX_TILE_PAYLOAD:
         raise ValueError("PXL v8 tile payload exceeds safety limit")
+    # Every v8 tile candidate competes against the verbatim pixel payload.
+    # Keep this encoder invariant explicit so the decoder can safely enforce it.
+    if len(payload) > decoded_size:
+        raise ValueError("PXL v8 tile payload exceeds decoded tile size")
     crc = binascii.crc32(payload) & 0xFFFFFFFF
     f.write(V8_TILE_HEADER.pack(tx, ty, tw, th, codec, transform,
                                 len(payload), decoded_size, crc))
@@ -2501,6 +2508,9 @@ def _decompress_v8_stream(stream, src, dst, profile, channels, flags, width, hei
     current = None
     regions = []
     count = 0
+    payload_total = 0
+    current_group_tiles = 0
+    image_bytes = width * height * channels
     while True:
         header = stream.read(V8_TILE_HEADER.size)
         if not header:
@@ -2519,6 +2529,14 @@ def _decompress_v8_stream(stream, src, dst, profile, channels, flags, width, hei
             raise ValueError("Unknown PXL v8 tile transform")
         if payload_size > core.MAX_TILE_PAYLOAD:
             raise ValueError("PXL v8 tile exceeds payload safety limit")
+        # The encoder always evaluates the raw tile as a candidate, so no
+        # valid v8 tile can be larger than its decoded pixels. Enforcing this
+        # also bounds aggregate retained compressed data by the image size.
+        if payload_size > decoded_size:
+            raise ValueError("PXL v8 tile payload exceeds decoded tile size")
+        if payload_size > image_bytes - payload_total:
+            raise ValueError("PXL v8 aggregate tile payload exceeds image-size limit")
+        payload_total += payload_size
         payload = stream.read(payload_size)
         if len(payload) != payload_size:
             raise ValueError("Truncated PXL v8 tile payload")
@@ -2527,8 +2545,12 @@ def _decompress_v8_stream(stream, src, dst, profile, channels, flags, width, hei
         if transform & 0x40:
             current = []
             groups.append(current)
+            current_group_tiles = 0
         elif current is None:
             raise ValueError("First PXL v8 tile must begin an independent reference group")
+        current_group_tiles += 1
+        if current_group_tiles > V8_GROUP_MAX_TILES:
+            raise ValueError("PXL v8 reference group exceeds the 256-tile safety limit")
         current.append((tx, ty, tw, th, codec, transform, payload, decoded_size))
         regions.append((tx, ty, tw, th))
     if not count or not groups:
