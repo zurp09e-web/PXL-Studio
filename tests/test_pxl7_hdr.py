@@ -84,7 +84,7 @@ class PXL7HighPrecisionTests(unittest.TestCase):
             array = rng.integers(0, 65536, size=(80, 96, 3), dtype=np.uint16)
             source, packed, restored = root / "source.png", root / "image.pxl", root / "restored.png"
             import png as pypng
-            writer = pypng.Writer(width=96, height=80, bitdepth=16)
+            writer = pypng.Writer(width=96, height=80, bitdepth=16, greyscale=False)
             with source.open("wb") as stream:
                 writer.write(stream, (array[y].reshape(-1).tolist() for y in range(80)))
             pxl.compress(source, packed, tile_size=64, effort="fast", backend="cpu", workers=1)
