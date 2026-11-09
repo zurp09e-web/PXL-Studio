@@ -1,4 +1,4 @@
-# Building PXL Studio 8.0.1
+# Building PXL Studio 8.0.3
 
 PXL Studio keeps its desktop application and image I/O layer in Python, while
 its default accelerated codec backend is a custom C++17 shared library.
