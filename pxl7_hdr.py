@@ -429,7 +429,6 @@ def inspect(path):
 def decompress(input_path, output_path, progress=None, backend="auto", workers=None):
     src, dst = Path(input_path), Path(output_path)
     info = inspect(src)
-    shuffled = np.empty((height, width, channels, bytes_per_sample), dtype=np.uint8)
     with tempfile.TemporaryDirectory(prefix="pxl7_decode_") as td:
         td = Path(td)
         from pxl4_engine import decompress as decompress_v6
@@ -439,6 +438,9 @@ def decompress(input_path, output_path, progress=None, backend="auto", workers=N
                 raise ValueError("Truncated PXL v7 header")
             _, _, _, channels, flags, width, height, tile_size, bytes_per_sample, plane_count = core.HEADER.unpack(header)
             sample_code, color_transform = flags & 0x03, flags >> 2
+            if (width, height, channels) != (info["width"], info["height"], info["channels"]):
+                raise ValueError("PXL v7 header changed during decode")
+            shuffled = np.empty((height, width, channels, bytes_per_sample), dtype=np.uint8)
             for i in range(plane_count):
                 entry = f.read(PLANE_ENTRY.size)
                 if len(entry) != PLANE_ENTRY.size:
