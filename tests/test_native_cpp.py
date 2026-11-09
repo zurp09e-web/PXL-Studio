@@ -15,6 +15,22 @@ def native_backend():
     return backend
 
 
+def test_cpp_native_pixel_lz_rejects_uint64_varint_overflow():
+    backend = native_backend()
+    malformed = bytes((0,)) + bytes((0x80,)) * 9 + bytes((0x02,))
+    with pytest.raises(ValueError, match="Invalid PXL PixelLZ stream"):
+        backend.pixel_lz_decode(malformed, b"", expected_pixels=1, channels=1)
+
+
+def test_cpp_native_variable_blocks_reject_uint64_varint_overflow():
+    native_backend()
+    decoder = engine.VariableBlockReferenceState(1)
+    decoder.update(bytes((17,)) * 64, 8, 8)
+    malformed = bytes((1, 0)) + bytes((0x80,)) * 9 + bytes((0x02,))
+    with pytest.raises(ValueError, match="Invalid PXL native variable-block stream"):
+        decoder.decode(malformed, 8, 8)
+
+
 def test_cpp_fused_legacy_filter_is_byte_exact():
     backend = native_backend()
     rng = np.random.default_rng(501)
