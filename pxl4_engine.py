@@ -110,11 +110,14 @@ if core._numba_njit is not None:
     def _pixel_lz_read_varint(tokens, pos):
         value = 0
         shift = 0
-        for _ in range(10):
+        for i in range(10):
             if pos >= tokens.size:
                 return 0, pos, -1
             b = int(tokens[pos])
             pos += 1
+            # The tenth byte of a uint64 varint may contain only bit zero.
+            if i == 9 and b > 1:
+                return 0, pos, -2
             value |= (b & 127) << shift
             if (b & 128) == 0:
                 return value, pos, 0
