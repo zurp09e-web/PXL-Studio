@@ -217,7 +217,7 @@ class PXL7ModelTests(unittest.TestCase):
         # dimensions must be checked before invoking the nested decoder.
         oversized_plane = pxl.HEADER.pack(
             pxl.MAGIC, engine.VERSION, pxl.PROFILE_LOSSLESS,
-            channels, 0, 32768, 32768, 64, 0, 0,
+            channels, 0, 8192, 8192, 64, 0, 0,
         )
         with tempfile.TemporaryDirectory() as td:
             archive = Path(td) / "mismatched-plane.pxl"
