@@ -586,16 +586,17 @@ def _varint(value: int) -> bytes:
 
 def _read_varint(data: bytes, pos: int) -> tuple[int, int]:
     value = 0
-    shift = 0
-    for _ in range(10):
+    for i in range(10):
         if pos >= len(data):
             raise ValueError("Truncated PXL v4 varint")
         b = data[pos]
         pos += 1
-        value |= (b & 0x7F) << shift
+        # A uint64 varint has only one usable bit in its tenth byte.
+        if i == 9 and b > 1:
+            raise ValueError("Overflowing PXL v4 varint")
+        value |= (b & 0x7F) << (i * 7)
         if not (b & 0x80):
             return value, pos
-        shift += 7
     raise ValueError("Oversized PXL v4 varint")
 
 
