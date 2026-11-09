@@ -190,7 +190,28 @@ int mixed_decode(const uint8_t* blob,uint32_t bn,uint32_t outn,uint32_t w,uint32
     for(uint32_t c=0;c<nctx;++c){if(p+2>bn)return -3;uint32_t sz=blob[p]|(uint32_t(blob[p+1])<<8);p+=2;if(!sz)continue;if(p+sz>bn)return -4;uint32_t end=p+sz;uint8_t mode=blob[p++];
         if(mode==0){if(p+512!=end)return -5;for(uint32_t s=0;s<256;++s){freq[c][s]=uint16_t(blob[p]|(uint16_t(blob[p+1])<<8));p+=2;}}
         else if(mode==1){if(p>=end)return -6;uint32_t count=blob[p++];if(!count)count=256;for(uint32_t k=0;k<count;++k){if(p>=end)return -7;uint32_t s=blob[p++];uint64_t v=0;uint32_t sh=0;bool ok=false;for(int j=0;j<5;++j){if(p>=end||sh>=32)return -8;uint8_t b=blob[p++];v|=uint64_t(b&127)<<sh;if(!(b&128)){ok=true;break;}sh+=7;}if(!ok||s>255||!v||v>TOTAL||freq[c][s])return -9;freq[c][s]=uint16_t(v);}}
-        else return -10;if(p!=end)return -11;uint32_t sum=0;for(uint32_t s=0;s<256;++s){cum[c][s]=uint16_t(sum);for(uint32_t j=0;j<freq[c][s];++j)dec[c][sum+j]=uint8_t(s);sum+=freq[c][s];}if(sum!=TOTAL)return -12;}
+        else return -10;
+        if(p!=end)return -11;
+
+        // Validate the complete frequency table before populating the fixed-size
+        // 4096-entry decoder table. A malformed dense table can otherwise make
+        // sum+j exceed TOTAL and write past dec[c] before the old final check.
+        uint32_t sum=0;
+        for(uint32_t s=0;s<256;++s){
+            const uint32_t frequency=freq[c][s];
+            if(frequency>TOTAL-sum)return -12;
+            sum+=frequency;
+        }
+        if(sum!=TOTAL)return -12;
+
+        // The table is now proven to occupy exactly [0, TOTAL).
+        sum=0;
+        for(uint32_t s=0;s<256;++s){
+            cum[c][s]=uint16_t(sum);
+            for(uint32_t j=0;j<freq[c][s];++j)dec[c][sum+j]=uint8_t(s);
+            sum+=freq[c][s];
+        }
+    }
     if(p+4>bn)return -13;uint64_t state=uint64_t(blob[p])|(uint64_t(blob[p+1])<<8)|(uint64_t(blob[p+2])<<16)|(uint64_t(blob[p+3])<<24);p+=4;if(state<RANS_L)return -14;
     for(uint32_t i=0;i<outn;++i){uint32_t c=ctx_for(out,i,row,chn),slot=uint32_t(state&(TOTAL-1)),s=dec[c][slot],f=freq[c][s];if(!f)return -15;state=uint64_t(f)*(state>>SCALE_BITS)+slot-cum[c][s];while(state<RANS_L){if(p>=bn)return -16;state=(state<<8)|blob[p++];}out[i]=uint8_t(s);}return p==bn?0:-17;
 }
