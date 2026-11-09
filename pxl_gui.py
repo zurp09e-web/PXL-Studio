@@ -19,6 +19,8 @@ from pxl7_hdr import probe_high_precision
 from codec_compare import compare_codecs, export_csv
 from pxl_batch import execute_queued_job
 from pxl_native import backend_info
+from pxv import encode_video as pxv_encode_video, decode_video as pxv_decode_video
+from pxv import inspect as inspect_pvx, verify as verify_pvx
 
 
 BG = "#0b1020"
@@ -37,7 +39,7 @@ RED = "#f17e83"
 class PXLStudio:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("PXL Studio 8.0.2 | Adaptive Lossless + HDR Image Workbench")
+        self.root.title("PXL Studio 8.1.0 | Lossless Image + Video Workbench")
         self.root.geometry("1180x850")
         self.root.minsize(980, 720)
         self.events: queue.Queue = queue.Queue()
@@ -60,6 +62,10 @@ class PXLStudio:
         self.compare_quality = tk.IntVar(value=88)
         self.compare_effort = tk.StringVar(value="balanced")
         self.compare_source = tk.StringVar()
+        self.video_source = tk.StringVar()
+        self.video_output = tk.StringVar()
+        self.video_effort = tk.StringVar(value="balanced")
+        self.video_tile_size = tk.StringVar(value="256")
 
         # Multi-file job queue. Each queued file runs in its own spawned process;
         # the queue limits simultaneous processes to avoid nested-pool overload.
@@ -140,7 +146,7 @@ class PXLStudio:
         titlebox = tk.Frame(brand, bg=BG)
         titlebox.pack(side="left")
         tk.Label(titlebox, text="PXL Studio", bg=BG, fg="#f5f8ff", font=("Segoe UI Semibold", 23)).pack(anchor="w")
-        tk.Label(titlebox, text="IMAGE COMPRESSION WORKBENCH  /  PXL V4 · BATCH + MULTICORE + CUDA", bg=BG, fg=MUTED,
+        tk.Label(titlebox, text="IMAGE + VIDEO COMPRESSION WORKBENCH  /  PXL V8 + PXV V1", bg=BG, fg=MUTED,
                  font=("Segoe UI Semibold", 8)).pack(anchor="w", pady=(0, 2))
         right = tk.Frame(header, bg=BG)
         right.pack(side="right", anchor="e", pady=(7, 0))
@@ -152,10 +158,13 @@ class PXLStudio:
         self.encode_tab = ttk.Frame(self.notebook, padding=16)
         self.compare_tab = ttk.Frame(self.notebook, padding=16)
         self.queue_tab = ttk.Frame(self.notebook, padding=16)
-        self.notebook.add(self.encode_tab, text="  ENCODE / DECODE  ")
+        self.video_tab = ttk.Frame(self.notebook, padding=16)
+        self.notebook.add(self.encode_tab, text="  IMAGE CODEC  ")
+        self.notebook.add(self.video_tab, text="  PXV VIDEO  ")
         self.notebook.add(self.queue_tab, text="  BATCH QUEUE  ")
         self.notebook.add(self.compare_tab, text="  CODEC LAB  ")
         self._build_encode_tab()
+        self._build_video_tab()
         self._build_queue_tab()
         self._build_compare_tab()
 
@@ -174,6 +183,85 @@ class PXLStudio:
         if title:
             ttk.Label(head, text=title, style="Section.TLabel").pack(anchor="w", pady=(3, 0))
         return frame
+
+    # ---------- PXV video codec tab ----------
+    def _build_video_tab(self):
+        intro = ttk.Frame(self.video_tab)
+        intro.pack(fill="x", pady=(0, 13))
+        ttk.Label(intro, text="PXV Video Codec", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(
+            intro,
+            text="Lossless video built from independently compressed PXL v8 frames. FFmpeg and ffprobe are required for video-file import and FFV1 export.",
+            style="Muted.TLabel", wraplength=1080,
+        ).pack(anchor="w", pady=(2, 0))
+
+        files = self._card(self.video_tab, "01 · Video source and destination",
+                           "Encode a video to PXV or decode an existing PXV archive")
+        files.pack(fill="x", pady=(0, 12))
+        ttk.Label(files, text="SOURCE VIDEO / PXV FILE", style="SurfaceMuted.TLabel").pack(anchor="w")
+        source_row = ttk.Frame(files, style="Surface.TFrame")
+        source_row.pack(fill="x", pady=(6, 12))
+        ttk.Entry(source_row, textvariable=self.video_source).pack(side="left", fill="x", expand=True)
+        ttk.Button(source_row, text="Browse…", command=self._choose_video_source).pack(side="left", padx=(8, 0))
+
+        ttk.Label(files, text="OUTPUT PXV / MATROSKA FILE", style="SurfaceMuted.TLabel").pack(anchor="w")
+        output_row = ttk.Frame(files, style="Surface.TFrame")
+        output_row.pack(fill="x", pady=(6, 0))
+        ttk.Entry(output_row, textvariable=self.video_output).pack(side="left", fill="x", expand=True)
+        ttk.Button(output_row, text="Save as…", command=self._choose_video_output).pack(side="left", padx=(8, 0))
+
+        settings = self._card(self.video_tab, "02 · PXL frame compression",
+                              "Each frame is encoded by the existing lossless PXL engine")
+        settings.pack(fill="x", pady=(0, 12))
+        options = ttk.Frame(settings, style="Surface.TFrame")
+        options.pack(fill="x")
+        ttk.Label(options, text="TILE SIZE", style="SurfaceMuted.TLabel").pack(side="left")
+        ttk.Combobox(options, textvariable=self.video_tile_size,
+                     values=("64", "128", "256", "512", "1024"),
+                     state="readonly", width=8).pack(side="left", padx=(8, 24))
+        ttk.Label(options, text="COMPRESSION EFFORT", style="SurfaceMuted.TLabel").pack(side="left")
+        ttk.Combobox(options, textvariable=self.video_effort,
+                     values=("fast", "balanced", "maximum"),
+                     state="readonly", width=13).pack(side="left", padx=(8, 0))
+        ttk.Label(
+            settings,
+            text="PXV v1 supports lossless 8-bit grayscale, RGB and RGBA frames. It stores per-frame timestamps and a random-access index; temporal prediction, HDR/10-bit, audio and subtitles are later roadmap work.",
+            style="SurfaceMuted.TLabel", wraplength=1040, justify="left",
+        ).pack(anchor="w", pady=(12, 0))
+
+        actions = self._card(self.video_tab, "03 · Operations",
+                             "The decoder verifies frame checksums before passing frames to PXL")
+        actions.pack(fill="x", pady=(0, 12))
+        action_row = ttk.Frame(actions, style="Surface.TFrame")
+        action_row.pack(fill="x")
+        self.video_encode_btn = ttk.Button(
+            action_row, text="Encode video → PXV", style="Accent.TButton",
+            command=self._start_video_encode)
+        self.video_encode_btn.pack(side="left")
+        self.video_decode_btn = ttk.Button(
+            action_row, text="Decode PXV → FFV1 MKV",
+            command=self._start_video_decode)
+        self.video_decode_btn.pack(side="left", padx=(8, 0))
+        self.video_info_btn = ttk.Button(
+            action_row, text="Inspect PXV", command=self._inspect_video)
+        self.video_info_btn.pack(side="left", padx=(8, 0))
+        self.video_verify_btn = ttk.Button(
+            action_row, text="Verify all frames", command=self._start_video_verify)
+        self.video_verify_btn.pack(side="left", padx=(8, 0))
+
+        monitor = self._card(self.video_tab, "04 · Operation monitor",
+                             "Video progress and PXV metadata")
+        monitor.pack(fill="both", expand=True)
+        self.video_progress = ttk.Progressbar(monitor, mode="determinate", maximum=100)
+        self.video_progress.pack(fill="x", pady=(0, 8))
+        self.video_progress_label = ttk.Label(
+            monitor, text="Ready · select a video or PXV archive",
+            style="SurfaceMuted.TLabel",
+        )
+        self.video_progress_label.pack(anchor="w", pady=(0, 10))
+        self.video_info = tk.StringVar(value="No PXV metadata loaded")
+        ttk.Label(monitor, textvariable=self.video_info, style="Surface.TLabel",
+                  wraplength=1050, justify="left").pack(anchor="w")
 
     # ---------- encode/decode tab ----------
     def _build_encode_tab(self):
@@ -315,7 +403,7 @@ class PXLStudio:
         else:
             engine_line = "Native C++ engine not built; using compatible Python/Numba fallback. Run: python build_native.py"
         simd_line = f" SIMD: {native.get('simd', 'scalar/fallback')}." if native["available"] else ""
-        self.log.insert("end", f"PXL Studio 8.0.2 ready. {engine_line}{simd_line} Compression profiles: fast / balanced / maximum.\n")
+        self.log.insert("end", f"PXL Studio 8.1.0 ready. {engine_line}{simd_line} PXV v1 lossless video is available in the PXV VIDEO tab.\n")
         self.log.configure(state="disabled")
 
     # ---------- batch queue tab ----------
@@ -601,6 +689,145 @@ class PXLStudio:
         if path:
             self.compare_source.set(path)
 
+    def _choose_video_source(self):
+        path = filedialog.askopenfilename(
+            title="Select a video or PXV archive",
+            filetypes=[
+                ("Video and PXV files", "*.pxv *.mp4 *.mkv *.mov *.avi *.webm *.m4v *.mpg *.mpeg *.ts *.wmv"),
+                ("PXV video archive", "*.pxv"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        self.video_source.set(path)
+        source = Path(path)
+        if source.suffix.lower() == ".pxv":
+            self.video_output.set(str(source.with_suffix(".mkv")))
+            try:
+                info = inspect_pvx(source)
+                self.video_info.set(
+                    f"PXV v{info['version']} · {info['dimensions']} · {info['frame_count']:,} frames · "
+                    f"{info['fps']} fps · {info['pixel_format']} · {info['file_bytes']:,} bytes"
+                )
+            except Exception as exc:
+                self.video_info.set(f"PXV inspection failed: {exc}")
+        else:
+            self.video_output.set(str(source.with_suffix(".pxv")))
+            self.video_info.set("Video selected · encode it to create an indexed PXV archive")
+
+    def _choose_video_output(self):
+        source = self.video_source.get().strip()
+        decoding = source.lower().endswith(".pxv")
+        if decoding:
+            path = filedialog.asksaveasfilename(
+                title="Save lossless FFV1 video",
+                defaultextension=".mkv",
+                filetypes=[("Matroska video", "*.mkv"), ("All files", "*.*")],
+            )
+        else:
+            path = filedialog.asksaveasfilename(
+                title="Save PXV video archive",
+                defaultextension=".pxv",
+                filetypes=[("PXV video", "*.pxv"), ("All files", "*.*")],
+            )
+        if path:
+            self.video_output.set(path)
+
+    def _video_paths(self):
+        src = self.video_source.get().strip()
+        dst = self.video_output.get().strip()
+        if not src or not Path(src).is_file():
+            messagebox.showerror("Missing video", "Choose an existing video or PXV file first.")
+            return None
+        if not dst:
+            messagebox.showerror("Missing output", "Choose an output file path first.")
+            return None
+        if Path(src).resolve() == Path(dst).resolve():
+            messagebox.showerror("Invalid output", "Input and output paths must be different.")
+            return None
+        return src, dst
+
+    def _start_video_encode(self):
+        if self.queue_executor is not None:
+            messagebox.showinfo("Batch queue active", "Finish the image batch queue before starting a video operation.")
+            return
+        paths = self._video_paths()
+        if not paths:
+            return
+        src, dst = paths
+        if src.lower().endswith(".pxv"):
+            messagebox.showerror("Invalid source", "Choose a regular video file to encode. The source is already PXV.")
+            return
+        overwrite = Path(dst).exists()
+        if overwrite and not messagebox.askyesno("Replace output?", f"Replace the existing file?\n{dst}"):
+            return
+        tile_size = int(self.video_tile_size.get())
+        effort = self.video_effort.get()
+        self.video_progress.configure(value=0)
+        self._run_worker(
+            "Encoding video to PXV",
+            lambda cb: pxv_encode_video(
+                src, dst, tile_size=tile_size, effort=effort,
+                progress=cb, overwrite=overwrite,
+            ),
+            "video_encode",
+        )
+
+    def _start_video_decode(self):
+        if self.queue_executor is not None:
+            messagebox.showinfo("Batch queue active", "Finish the image batch queue before starting a video operation.")
+            return
+        paths = self._video_paths()
+        if not paths:
+            return
+        src, dst = paths
+        if not src.lower().endswith(".pxv"):
+            messagebox.showerror("Invalid source", "Choose a .pxv archive to decode.")
+            return
+        overwrite = Path(dst).exists()
+        if overwrite and not messagebox.askyesno("Replace output?", f"Replace the existing file?\n{dst}"):
+            return
+        self.video_progress.configure(value=0)
+        self._run_worker(
+            "Decoding PXV to FFV1",
+            lambda cb: pxv_decode_video(src, dst, progress=cb, overwrite=overwrite),
+            "video_decode",
+        )
+
+    def _inspect_video(self):
+        src = self.video_source.get().strip()
+        if not src or not Path(src).is_file():
+            messagebox.showerror("Missing PXV", "Choose an existing .pxv archive first.")
+            return
+        try:
+            info = inspect_pvx(src)
+            self.video_info.set(" · ".join(
+                f"{key.replace('_', ' ').title()}: {value}"
+                for key, value in info.items()
+            ))
+            self._write_log("PXV metadata:")
+            for key, value in info.items():
+                self._write_log(f"  {key.replace('_', ' ').title()}: {value}")
+            self.status.set("PXV metadata loaded")
+        except Exception as exc:
+            messagebox.showerror("Cannot inspect PXV", str(exc))
+
+    def _start_video_verify(self):
+        src = self.video_source.get().strip()
+        if not src or not Path(src).is_file():
+            messagebox.showerror("Missing PXV", "Choose an existing .pxv archive first.")
+            return
+        if not src.lower().endswith(".pxv"):
+            messagebox.showerror("Invalid source", "Frame verification requires a .pxv archive.")
+            return
+        self.video_progress.configure(value=0)
+        self._run_worker(
+            "Verifying PXV frames",
+            lambda cb: verify_pvx(src, deep=False, progress=cb),
+            "video_verify",
+        )
+
     # ---------- acceleration ----------
     def _refresh_cuda_status(self, refresh=False):
         try:
@@ -668,7 +895,11 @@ class PXLStudio:
     def _set_busy(self, busy: bool):
         self.busy = busy
         state = "disabled" if busy else "normal"
-        for widget in (self.compress_btn, self.decompress_btn, self.info_btn, self.compare_btn):
+        for widget in (
+            self.compress_btn, self.decompress_btn, self.info_btn, self.compare_btn,
+            self.video_encode_btn, self.video_decode_btn, self.video_info_btn,
+            self.video_verify_btn,
+        ):
             widget.configure(state=state)
         self.export_btn.configure(state="disabled" if busy or not self.compare_results else "normal")
         if hasattr(self, "queue_start_button"):
@@ -1193,6 +1424,8 @@ class PXLStudio:
         self._set_busy(True)
         self.progress.configure(value=0)
         self.compare_progress.configure(value=0)
+        self.video_progress.configure(value=0)
+        self.video_progress_label.configure(text=label + "…")
         self.compare_progress_label.configure(text=label + "…")
         self.progress_label.configure(text=label + "…")
         self.status.set(label + "…")
@@ -1220,6 +1453,9 @@ class PXLStudio:
                     self.progress.configure(value=pct)
                     self.compare_progress.configure(value=pct)
                     self.compare_progress_label.configure(text=msg)
+                    if kind.startswith("video_"):
+                        self.video_progress.configure(value=pct)
+                        self.video_progress_label.configure(text=msg)
                     self.progress_label.configure(text=msg)
                     self.status.set(msg)
                 elif event[0] == "done":
@@ -1228,6 +1464,9 @@ class PXLStudio:
                     self.progress.configure(value=100)
                     self.compare_progress.configure(value=100)
                     self.compare_progress_label.configure(text="Complete")
+                    self.video_progress.configure(value=100)
+                    if kind.startswith("video_"):
+                        self.video_progress_label.configure(text="Complete")
                     self.progress_label.configure(text="Complete")
                     self.status.set("Complete · " + kind)
                     if kind == "compare":
@@ -1235,6 +1474,13 @@ class PXLStudio:
                         self._display_comparison(result)
                     else:
                         self._write_log("Completed successfully")
+                        if kind.startswith("video_"):
+                            summary = " · ".join(
+                                f"{key.replace('_', ' ')}: {value}"
+                                for key, value in result.items()
+                            )
+                            self.video_info.set(summary)
+                            self.video_progress_label.configure(text="Complete")
                         for key, value in result.items():
                             if key in ("input_bytes", "output_bytes"):
                                 value = f"{value:,} bytes"
@@ -1255,6 +1501,10 @@ class PXLStudio:
                     self.status.set("Failed · " + kind)
                     if kind == "compare":
                         self.compare_summary.configure(text="Comparison failed")
+                    elif kind.startswith("video_"):
+                        self.video_progress_label.configure(text="Failed")
+                        self.video_info.set("Operation failed · " + error)
+                        self._write_log("ERROR: " + error)
                     else:
                         self._write_log("ERROR: " + error)
                     messagebox.showerror("PXL operation failed", error)

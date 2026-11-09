@@ -25,6 +25,9 @@ SAMPLE_UINT16 = 1
 SAMPLE_FLOAT16 = 2
 SAMPLE_FLOAT32 = 3
 PLANE_ENTRY = struct.Struct("<QI")  # encoded PXL stream length, raw plane CRC32
+# Embedded byte-plane archives are at most their decoded byte count plus
+# container/tile-record overhead. Bound this allowance across all planes.
+MAX_EMBEDDED_ARCHIVE_OVERHEAD = 16 * 1024 * 1024
 
 
 def _read_tiff(path: Path):
@@ -412,6 +415,10 @@ def inspect(path):
         payload_bytes = sum(length for length, _ in entries)
         if payload_bytes != p.stat().st_size - core.HEADER.size - plane_count * PLANE_ENTRY.size:
             raise ValueError("PXL v7 plane sizes do not match file length")
+        decoded_sample_bytes = width * height * channels * bytes_per_sample
+        max_embedded_bytes = decoded_sample_bytes + MAX_EMBEDDED_ARCHIVE_OVERHEAD
+        if any(length < 1 for length, _ in entries) or payload_bytes > max_embedded_bytes:
+            raise ValueError("PXL v7 aggregate embedded planes exceed the decoded-image safety limit")
     return {"version": 7, "profile": "lossless", "width": width, "height": height,
             "channels": channels, "sample_format": {1: "uint16", 2: "float16", 3: "float32"}[sample_code],
             "color_transform": {0: "none", 1: "green", 2: "red", 3: "blue", 4: "YCoCg-R"}[transform],
@@ -422,49 +429,98 @@ def inspect(path):
 def decompress(input_path, output_path, progress=None, backend="auto", workers=None):
     src, dst = Path(input_path), Path(output_path)
     info = inspect(src)
-    with src.open("rb") as f:
-        header = f.read(core.HEADER.size)
-        _, _, _, channels, flags, width, height, tile_size, bytes_per_sample, plane_count = core.HEADER.unpack(header)
-        sample_code, color_transform = flags & 0x03, flags >> 2
-        entries = [PLANE_ENTRY.unpack(f.read(PLANE_ENTRY.size)) for _ in range(plane_count)]
-        payloads = []
-        for length, crc in entries:
-            max_plane_archive = core.MAX_PIXELS * channels + 64 * 1024 * 1024
-            if length < 1 or length > max_plane_archive:
-                raise ValueError("PXL v7 embedded plane exceeds safety limit")
-            payload = f.read(length)
-            if len(payload) != length:
-                raise ValueError("Truncated PXL v7 embedded plane")
-            payloads.append((payload, crc))
-        if f.read(1):
-            raise ValueError("Trailing bytes after PXL v7 planes")
-    plane_arrays = []
     with tempfile.TemporaryDirectory(prefix="pxl7_decode_") as td:
         td = Path(td)
         from pxl4_engine import decompress as decompress_v6
-        for i, (payload, expected_crc) in enumerate(payloads):
-            archive = td / f"plane_{i}.pxl"
-            restored = td / f"plane_{i}.png"
-            archive.write_bytes(payload)
-            decompress_v6(archive, restored, progress=None, backend=backend, workers=workers)
-            with Image.open(restored) as image:
-                if image.size != (width, height):
-                    raise ValueError("Decoded PXL v7 byte-plane dimensions do not match header")
-                plane = np.asarray(image, dtype=np.uint8)
-                if channels == 1:
-                    plane = plane.reshape(height, width, 1)
-                elif plane.ndim != 3 or plane.shape[2] != channels:
-                    raise ValueError("Decoded PXL v7 byte-plane channel count mismatch")
-                plane = np.ascontiguousarray(plane)
-            crc = binascii.crc32(plane.tobytes()) & 0xFFFFFFFF
-            if crc != expected_crc:
-                raise ValueError(f"PXL v7 byte-plane {i} checksum failed")
-            plane_arrays.append(plane)
-            if progress:
-                progress(int((i + 1) * 100 / plane_count), f"PXL v7 reconstructed byte plane {i + 1}/{plane_count}")
-    shuffled = np.stack(plane_arrays, axis=-1)
+        with src.open("rb") as f:
+            header = f.read(core.HEADER.size)
+            if len(header) != core.HEADER.size:
+                raise ValueError("Truncated PXL v7 header")
+            magic, version, profile, channels, flags, width, height, tile_size, bytes_per_sample, plane_count = core.HEADER.unpack(header)
+            sample_code, color_transform = flags & 0x03, flags >> 2
+            expected_sample_code = {"uint16": SAMPLE_UINT16, "float16": SAMPLE_FLOAT16,
+                                    "float32": SAMPLE_FLOAT32}.get(info["sample_format"])
+            expected_bytes = {SAMPLE_UINT16: 2, SAMPLE_FLOAT16: 2, SAMPLE_FLOAT32: 4}.get(sample_code)
+            if (
+                magic != core.MAGIC or version != VERSION or profile != core.PROFILE_LOSSLESS
+                or (width, height, channels, tile_size) !=
+                   (info["width"], info["height"], info["channels"], info["tile_size"])
+                or sample_code != expected_sample_code or expected_bytes is None
+                or bytes_per_sample != expected_bytes or plane_count != expected_bytes
+                or color_transform not in (0, 1, 2, 3, 4)
+                or (color_transform and (sample_code != SAMPLE_UINT16 or channels < 3))
+            ):
+                raise ValueError("PXL v7 header changed or is invalid")
+            shuffled = np.empty((height, width, channels, bytes_per_sample), dtype=np.uint8)
+            max_aggregate_bytes = (
+                width * height * channels * bytes_per_sample
+                + MAX_EMBEDDED_ARCHIVE_OVERHEAD
+            )
+            aggregate_bytes_read = 0
+            # The format stores the complete plane table before any payload.
+            # This table is tiny (two or four entries), so keep it in memory
+            # while streaming each potentially large embedded archive.
+            entries = []
+            for _ in range(plane_count):
+                entry = f.read(PLANE_ENTRY.size)
+                if len(entry) != PLANE_ENTRY.size:
+                    raise ValueError("Truncated PXL v7 plane table")
+                entries.append(PLANE_ENTRY.unpack(entry))
+            for i, (length, expected_crc) in enumerate(entries):
+                max_plane_archive = width * height * channels + MAX_EMBEDDED_ARCHIVE_OVERHEAD
+                if length < 1 or length > max_plane_archive:
+                    raise ValueError("PXL v7 embedded plane exceeds safety limit")
+                if length > max_aggregate_bytes - aggregate_bytes_read:
+                    raise ValueError("PXL v7 aggregate embedded planes exceed the decoded-image safety limit")
+                aggregate_bytes_read += length
+
+                # Copy one embedded archive to disk in bounded chunks. Keeping
+                # every compressed byte-plane in a Python list amplified peak
+                # memory use by up to the complete high-precision image size.
+                archive = td / f"plane_{i}.pxl"
+                restored = td / f"plane_{i}.png"
+                remaining = length
+                with archive.open("wb") as plane_stream:
+                    while remaining:
+                        chunk = f.read(min(1024 * 1024, remaining))
+                        if not chunk:
+                            raise ValueError("Truncated PXL v7 embedded plane")
+                        plane_stream.write(chunk)
+                        remaining -= len(chunk)
+
+                # Validate the embedded archive header before handing it to
+                # the decoder. Otherwise a tiny outer plane entry could contain
+                # a PXL header requesting an image much larger than the outer
+                # high-precision image, causing an avoidable allocation spike.
+                plane_info = core.inspect(archive)
+                if (
+                    plane_info.get("width") != width
+                    or plane_info.get("height") != height
+                    or plane_info.get("channels") != channels
+                    or plane_info.get("profile") != "lossless"
+                ):
+                    raise ValueError("PXL v7 embedded byte-plane archive geometry/profile mismatch")
+
+                decompress_v6(archive, restored, progress=None, backend=backend, workers=workers)
+                with Image.open(restored) as image:
+                    if image.size != (width, height):
+                        raise ValueError("Decoded PXL v7 byte-plane dimensions do not match header")
+                    plane = np.asarray(image, dtype=np.uint8)
+                    if channels == 1:
+                        plane = plane.reshape(height, width, 1)
+                    elif plane.ndim != 3 or plane.shape[2] != channels:
+                        raise ValueError("Decoded PXL v7 byte-plane channel count mismatch")
+                    plane = np.ascontiguousarray(plane)
+                crc = binascii.crc32(plane.tobytes()) & 0xFFFFFFFF
+                if crc != expected_crc:
+                    raise ValueError(f"PXL v7 byte-plane {i} checksum failed")
+                shuffled[..., i] = plane
+                if progress:
+                    progress(int((i + 1) * 100 / plane_count), f"PXL v7 reconstructed byte plane {i + 1}/{plane_count}")
+            if f.read(1):
+                raise ValueError("Trailing bytes after PXL v7 planes")
     dtype = {SAMPLE_UINT16: np.dtype("<u2"), SAMPLE_FLOAT16: np.dtype("<f2"), SAMPLE_FLOAT32: np.dtype("<f4")}[sample_code]
-    result = shuffled.reshape(height, width, channels * bytes_per_sample).copy().view(dtype)
+    result = shuffled.reshape(height, width, channels * bytes_per_sample).view(dtype)
     result = result.reshape((height, width, channels))
     if sample_code == SAMPLE_UINT16 and color_transform:
         result = _inverse_uint16_color(result, channels, color_transform)

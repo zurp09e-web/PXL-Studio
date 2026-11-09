@@ -9,6 +9,7 @@ from PIL import Image
 
 import pxl
 import pxl4_engine as engine
+import pxl7_hdr
 from pxl7_hdr import SAMPLE_FLOAT16, SAMPLE_FLOAT32, SAMPLE_UINT16, probe_high_precision
 
 
@@ -83,7 +84,7 @@ class PXL7HighPrecisionTests(unittest.TestCase):
             array = rng.integers(0, 65536, size=(80, 96, 3), dtype=np.uint16)
             source, packed, restored = root / "source.png", root / "image.pxl", root / "restored.png"
             import png as pypng
-            writer = pypng.Writer(width=96, height=80, bitdepth=16)
+            writer = pypng.Writer(width=96, height=80, bitdepth=16, greyscale=False)
             with source.open("wb") as stream:
                 writer.write(stream, (array[y].reshape(-1).tolist() for y in range(80)))
             pxl.compress(source, packed, tile_size=64, effort="fast", backend="cpu", workers=1)
@@ -176,6 +177,65 @@ class PXL7ModelTests(unittest.TestCase):
         tokens = encoder.encode(tile, 64, 64)
         self.assertLess(len(tokens), len(tile))
         self.assertEqual(decoder.decode(tokens, 64, 64), tile)
+
+
+    def test_v7_inspect_rejects_aggregate_embedded_payload_amplification(self):
+        width = height = 64
+        channels = 1
+        bytes_per_sample = 2
+        plane_count = 2
+        decoded_sample_bytes = width * height * channels * bytes_per_sample
+        declared_payload_bytes = (
+            decoded_sample_bytes + pxl7_hdr.MAX_EMBEDDED_ARCHIVE_OVERHEAD + 1
+        )
+        first_length = declared_payload_bytes - 1
+        with tempfile.TemporaryDirectory() as td:
+            archive = Path(td) / "oversized-planes.pxl"
+            header = pxl.HEADER.pack(
+                pxl.MAGIC, pxl7_hdr.VERSION, pxl.PROFILE_LOSSLESS,
+                channels, SAMPLE_UINT16, width, height, 64,
+                bytes_per_sample, plane_count,
+            )
+            with archive.open("wb") as stream:
+                stream.write(header)
+                stream.write(pxl7_hdr.PLANE_ENTRY.pack(first_length, 0))
+                stream.write(pxl7_hdr.PLANE_ENTRY.pack(1, 0))
+                stream.seek(len(header) + plane_count * pxl7_hdr.PLANE_ENTRY.size
+                            + declared_payload_bytes - 1)
+                stream.write(bytes((0,)))
+
+            with self.assertRaisesRegex(ValueError, "aggregate embedded planes"):
+                pxl7_hdr.inspect(archive)
+
+
+    def test_v7_decoder_rejects_embedded_plane_dimension_mismatch_before_decode(self):
+        width = height = 64
+        channels = 1
+        bytes_per_sample = 2
+        plane_count = 2
+        # A tiny nested PXL header advertises a huge decoded image. The outer
+        # dimensions must be checked before invoking the nested decoder.
+        oversized_plane = pxl.HEADER.pack(
+            pxl.MAGIC, engine.VERSION, pxl.PROFILE_LOSSLESS,
+            channels, 0, 8192, 8192, 64, 0, 0,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            archive = Path(td) / "mismatched-plane.pxl"
+            output = Path(td) / "restored.tif"
+            header = pxl.HEADER.pack(
+                pxl.MAGIC, pxl7_hdr.VERSION, pxl.PROFILE_LOSSLESS,
+                channels, SAMPLE_UINT16, width, height, 64,
+                bytes_per_sample, plane_count,
+            )
+            with archive.open("wb") as stream:
+                stream.write(header)
+                for _ in range(plane_count):
+                    stream.write(pxl7_hdr.PLANE_ENTRY.pack(len(oversized_plane), 0))
+                stream.write(oversized_plane)
+                stream.write(oversized_plane)
+
+            with self.assertRaisesRegex(ValueError, "geometry/profile mismatch"):
+                pxl7_hdr.decompress(archive, output, backend="cpu", workers=1)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,29 @@
 import tempfile
 from pathlib import Path
 import numpy as np
+import pytest
 from PIL import Image
 import pxl
 import pxl4_engine as v4
+
+
+def test_python_v8_varint_rejects_uint64_overflow_and_accepts_maximum():
+    maximum = bytes((0xFF,)) * 9 + bytes((0x01,))
+    value, position = v4._read_varint(maximum, 0)
+    assert value == (1 << 64) - 1
+    assert position == 10
+
+    malformed = bytes((0x80,)) * 9 + bytes((0x02,))
+    with pytest.raises(ValueError, match="Overflowing PXL v4 varint"):
+        v4._read_varint(malformed, 0)
+
+
+def test_numba_pixel_lz_varint_rejects_uint64_overflow_when_available():
+    if pxl._numba_njit is None:
+        pytest.skip("Numba is not installed")
+    malformed = np.frombuffer(bytes((0x80,)) * 9 + bytes((0x02,)), dtype=np.uint8)
+    _, _, error = v4._pixel_lz_read_varint(malformed, 0)
+    assert error == -2
 
 
 def run_roundtrip(array, mode, tile=64, workers=1):
@@ -232,3 +252,53 @@ def test_legacy_v7_fixture_still_decodes():
         assert result["version"] == 7
         with Image.open(expected) as a, Image.open(restored) as b:
             assert np.array_equal(np.asarray(a.convert("RGB")), np.asarray(b.convert("RGB")))
+
+
+def test_v8_decoder_rejects_tile_payload_larger_than_decoded_pixels(tmp_path):
+    source = tmp_path / "source.png"
+    packed = tmp_path / "image.pxl"
+    corrupted = tmp_path / "oversized-tile.pxl"
+    restored = tmp_path / "restored.png"
+    Image.new("RGB", (64, 64), (12, 34, 56)).save(source)
+    pxl.compress(source, packed, tile_size=64, backend="cpu", workers=1,
+                 adaptive_tiles=False)
+
+    data = bytearray(packed.read_bytes())
+    offset = v4.HEADER.size
+    fields = list(v4.V8_TILE_HEADER.unpack_from(data, offset))
+    fields[6] = fields[7] + 1  # payload_size = decoded_size + 1
+    data[offset:offset + v4.V8_TILE_HEADER.size] = v4.V8_TILE_HEADER.pack(*fields)
+    corrupted.write_bytes(data)
+
+    with pytest.raises(ValueError, match="payload exceeds decoded tile size"):
+        pxl.decompress(corrupted, restored, backend="cpu", workers=1)
+
+
+def test_v8_decoder_rejects_reference_groups_longer_than_encoder_limit(tmp_path):
+    source = tmp_path / "source.png"
+    packed = tmp_path / "image.pxl"
+    corrupted = tmp_path / "oversized-group.pxl"
+    restored = tmp_path / "restored.png"
+    # 17 x 17 = 289 fixed 64-pixel tiles, so a valid encoder writes a new
+    # independent group after the first 256 tiles.
+    Image.new("RGB", (1088, 1088), (18, 27, 36)).save(source)
+    result = pxl.compress(source, packed, tile_size=64, backend="cpu", workers=1,
+                          adaptive_tiles=False, checkpoint_interval=256)
+    assert result["tiles"] == 289
+
+    data = bytearray(packed.read_bytes())
+    offset = v4.HEADER.size
+    for index in range(result["tiles"]):
+        fields = list(v4.V8_TILE_HEADER.unpack_from(data, offset))
+        payload_size = fields[6]
+        if index == 256:
+            fields[5] &= ~0x40  # remove the second group's checkpoint marker
+            data[offset:offset + v4.V8_TILE_HEADER.size] = v4.V8_TILE_HEADER.pack(*fields)
+            break
+        offset += v4.V8_TILE_HEADER.size + payload_size
+    else:
+        raise AssertionError("Did not find the second reference group")
+
+    corrupted.write_bytes(data)
+    with pytest.raises(ValueError, match="256-tile safety limit"):
+        pxl.decompress(corrupted, restored, backend="cpu", workers=1)

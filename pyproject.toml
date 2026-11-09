@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pxl-image-codec"
-version = "8.0.2"
-description = "PXL v8 lossless and high-precision image codec with native C++17 acceleration"
+version = "8.1.0"
+description = "PXL lossless image and PXV indexed lossless video codecs"
 requires-python = ">=3.10"
 dependencies = ["Pillow>=10.0.0", "numpy>=1.26.0", "numba>=0.59", "tifffile>=2024.8.30", "pypng>=0.20220715.0"]
 
@@ -17,6 +17,7 @@ hdr-exr = ["OpenEXR>=3.3"]
 [project.scripts]
 pxl = "pxl:cli_entry"
 pxl-studio = "pxl_gui:main"
+pxv = "pxv:cli_entry"
 
 [tool.setuptools]
-py-modules = ["pxl", "pxl4_engine", "pxl_gui", "pxl_batch", "codec_compare", "pxl_native", "pxl7_hdr"]
+py-modules = ["pxl", "pxl4_engine", "pxl_gui", "pxl_batch", "codec_compare", "pxl_native", "pxl7_hdr", "pxv"]

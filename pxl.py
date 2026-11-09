@@ -802,16 +802,18 @@ def _uvarint_bytes(value: int) -> bytes:
 
 def _read_uvarint_bytes(data: bytes, pos: int) -> tuple[int, int]:
     value = 0
-    shift = 0
-    for _ in range(5):
+    for i in range(5):
         if pos >= len(data):
             raise ValueError("Truncated PXL entropy table varint")
         b = data[pos]
         pos += 1
-        value |= (b & 0x7f) << shift
+        # This field is a uint32 varint: only four low bits are usable
+        # in its fifth byte.
+        if i == 4 and b > 0x0F:
+            raise ValueError("Overflowing PXL entropy table varint")
+        value |= (b & 0x7f) << (i * 7)
         if not (b & 0x80):
             return value, pos
-        shift += 7
     raise ValueError("Oversized PXL entropy table varint")
 
 
@@ -1809,10 +1811,13 @@ if _numba_njit is not None:
     def _run_read_varint_numba(tokens, pos):
         value = 0
         shift = 0
-        for _ in range(10):
+        for i in range(10):
             if pos >= tokens.size:
                 return 0, pos, -1
             b = int(tokens[pos]); pos += 1
+            # Reject overflow before a shift by 63 can lose high bits.
+            if i == 9 and b > 1:
+                return 0, pos, -2
             value |= (b & 127) << shift
             if (b & 128) == 0:
                 return value, pos, 0
@@ -2189,16 +2194,16 @@ def _write_svarint(out: bytearray, value: int) -> None:
 
 def _read_uvarint(data: bytes, pos: int) -> tuple[int, int]:
     value = 0
-    shift = 0
-    for _ in range(5):
+    for i in range(5):
         if pos >= len(data):
             raise ValueError("Truncated coefficient varint")
         b = data[pos]
         pos += 1
-        value |= (b & 0x7F) << shift
+        if i == 4 and b > 0x0F:
+            raise ValueError("Overflowing coefficient varint")
+        value |= (b & 0x7F) << (i * 7)
         if not (b & 0x80):
             return value, pos
-        shift += 7
     raise ValueError("Oversized coefficient varint")
 
 

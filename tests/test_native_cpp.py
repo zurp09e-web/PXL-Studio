@@ -15,6 +15,22 @@ def native_backend():
     return backend
 
 
+def test_cpp_native_pixel_lz_rejects_uint64_varint_overflow():
+    backend = native_backend()
+    malformed = bytes((0,)) + bytes((0x80,)) * 9 + bytes((0x02,))
+    with pytest.raises(ValueError, match="Invalid PXL PixelLZ stream"):
+        backend.pixel_lz_decode(malformed, b"", expected_pixels=1, channels=1)
+
+
+def test_cpp_native_variable_blocks_reject_uint64_varint_overflow():
+    native_backend()
+    decoder = engine.VariableBlockReferenceState(1)
+    decoder.update(bytes((17,)) * 64, 8, 8)
+    malformed = bytes((1, 0)) + bytes((0x80,)) * 9 + bytes((0x02,))
+    with pytest.raises(ValueError, match="Invalid PXL native variable-block stream"):
+        decoder.decode(malformed, 8, 8)
+
+
 def test_cpp_fused_legacy_filter_is_byte_exact():
     backend = native_backend()
     rng = np.random.default_rng(501)
@@ -245,3 +261,30 @@ def test_python_fallback_variable_blocks_emit_delta_references():
         tokens = encoder.encode(cur_bytes, 64, 64)
         assert tokens[0] == 2 and tokens[1] in (1, 2)
         assert decoder.decode(tokens, 64, 64) == cur_bytes
+
+
+def _mixed_rans_blob_with_first_context(table: bytes) -> bytes:
+    # The one-channel model has 17 contexts. Context zero is deliberately
+    # malformed; the remaining contexts are absent, as allowed by the format.
+    contexts = 17
+    blob = bytearray((contexts,))
+    for context in range(contexts):
+        entry = table if context == 0 else b""
+        blob.extend(len(entry).to_bytes(2, "little"))
+        blob.extend(entry)
+    blob.extend((1 << 23).to_bytes(4, "little"))
+    return bytes(blob)
+
+
+@pytest.mark.parametrize("table", [
+    b"\x00" + (2049).to_bytes(2, "little") + (2048).to_bytes(2, "little")
+    + bytes(254 * 2),
+    bytes((1, 2, 0, 0x81, 0x10, 1, 0x80, 0x10)),
+], ids=["dense-frequency-overflow", "sparse-frequency-overflow"])
+def test_cpp_mixed_context_decoder_rejects_frequency_sum_overflow(table):
+    backend = native_backend()
+    # width=height=channels=1 produces two filtered bytes. The corrupted
+    # model sums to 4097, one past the fixed 4096-entry rANS decode table.
+    blob = _mixed_rans_blob_with_first_context(table)
+    with pytest.raises(ValueError, match="mixed-context stream"):
+        backend.mixed_rans_decode(blob, output_size=2, width=1, height=1, channels=1)

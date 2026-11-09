@@ -39,6 +39,9 @@ CODEC_PRED2D_MIXED = 26
 CODEC_BLOCK2D_VAR = 27
 V8_TILE_HEADER = struct.Struct("<IIHHBBIII")  # x,y,w,h,codec,transform,payload,decoded,crc
 V8_GROUP_INTERVAL = 8
+# The encoder accepts checkpoint intervals up to 256; reject archives that
+# claim longer history groups before buffering unbounded tile payloads.
+V8_GROUP_MAX_TILES = 256
 
 # Limits for the cross-tile reference state. These are part of v4 semantics.
 PIXEL_HISTORY_BYTES = 512 * 1024
@@ -107,11 +110,14 @@ if core._numba_njit is not None:
     def _pixel_lz_read_varint(tokens, pos):
         value = 0
         shift = 0
-        for _ in range(10):
+        for i in range(10):
             if pos >= tokens.size:
                 return 0, pos, -1
             b = int(tokens[pos])
             pos += 1
+            # The tenth byte of a uint64 varint may contain only bit zero.
+            if i == 9 and b > 1:
+                return 0, pos, -2
             value |= (b & 127) << shift
             if (b & 128) == 0:
                 return value, pos, 0
@@ -580,16 +586,17 @@ def _varint(value: int) -> bytes:
 
 def _read_varint(data: bytes, pos: int) -> tuple[int, int]:
     value = 0
-    shift = 0
-    for _ in range(10):
+    for i in range(10):
         if pos >= len(data):
             raise ValueError("Truncated PXL v4 varint")
         b = data[pos]
         pos += 1
-        value |= (b & 0x7F) << shift
+        # A uint64 varint has only one usable bit in its tenth byte.
+        if i == 9 and b > 1:
+            raise ValueError("Overflowing PXL v4 varint")
+        value |= (b & 0x7F) << (i * 7)
         if not (b & 0x80):
             return value, pos
-        shift += 7
     raise ValueError("Oversized PXL v4 varint")
 
 
@@ -2109,6 +2116,10 @@ def _validate_v8_partition(regions, width, height):
 def _write_tile_v8(f, tx, ty, tw, th, codec, transform, payload, decoded_size):
     if len(payload) > core.MAX_TILE_PAYLOAD:
         raise ValueError("PXL v8 tile payload exceeds safety limit")
+    # Every v8 tile candidate competes against the verbatim pixel payload.
+    # Keep this encoder invariant explicit so the decoder can safely enforce it.
+    if len(payload) > decoded_size:
+        raise ValueError("PXL v8 tile payload exceeds decoded tile size")
     crc = binascii.crc32(payload) & 0xFFFFFFFF
     f.write(V8_TILE_HEADER.pack(tx, ty, tw, th, codec, transform,
                                 len(payload), decoded_size, crc))
@@ -2501,6 +2512,9 @@ def _decompress_v8_stream(stream, src, dst, profile, channels, flags, width, hei
     current = None
     regions = []
     count = 0
+    payload_total = 0
+    current_group_tiles = 0
+    image_bytes = width * height * channels
     while True:
         header = stream.read(V8_TILE_HEADER.size)
         if not header:
@@ -2519,6 +2533,14 @@ def _decompress_v8_stream(stream, src, dst, profile, channels, flags, width, hei
             raise ValueError("Unknown PXL v8 tile transform")
         if payload_size > core.MAX_TILE_PAYLOAD:
             raise ValueError("PXL v8 tile exceeds payload safety limit")
+        # The encoder always evaluates the raw tile as a candidate, so no
+        # valid v8 tile can be larger than its decoded pixels. Enforcing this
+        # also bounds aggregate retained compressed data by the image size.
+        if payload_size > decoded_size:
+            raise ValueError("PXL v8 tile payload exceeds decoded tile size")
+        if payload_size > image_bytes - payload_total:
+            raise ValueError("PXL v8 aggregate tile payload exceeds image-size limit")
+        payload_total += payload_size
         payload = stream.read(payload_size)
         if len(payload) != payload_size:
             raise ValueError("Truncated PXL v8 tile payload")
@@ -2527,8 +2549,12 @@ def _decompress_v8_stream(stream, src, dst, profile, channels, flags, width, hei
         if transform & 0x40:
             current = []
             groups.append(current)
+            current_group_tiles = 0
         elif current is None:
             raise ValueError("First PXL v8 tile must begin an independent reference group")
+        current_group_tiles += 1
+        if current_group_tiles > V8_GROUP_MAX_TILES:
+            raise ValueError("PXL v8 reference group exceeds the 256-tile safety limit")
         current.append((tx, ty, tw, th, codec, transform, payload, decoded_size))
         regions.append((tx, ty, tw, th))
     if not count or not groups:
