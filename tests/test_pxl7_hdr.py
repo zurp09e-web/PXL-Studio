@@ -202,7 +202,7 @@ class PXL7ModelTests(unittest.TestCase):
                 stream.write(pxl7_hdr.PLANE_ENTRY.pack(1, 0))
                 stream.seek(len(header) + plane_count * pxl7_hdr.PLANE_ENTRY.size
                             + declared_payload_bytes - 1)
-                stream.write(b"\\x00")
+                stream.write(bytes((0,)))
 
             with self.assertRaisesRegex(ValueError, "aggregate embedded planes"):
                 pxl7_hdr.inspect(archive)
