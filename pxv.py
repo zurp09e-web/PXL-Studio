@@ -490,6 +490,13 @@ def _read_index_entry(stream, info: dict, frame_number: int) -> tuple[int, int, 
 
 
 def _pxl_dimensions(metadata: dict) -> tuple[int, int]:
+    # PXL v8 exposes numeric width/height. Older readers may expose a
+    # formatted dimensions string, so accept both API shapes.
+    if "width" in metadata and "height" in metadata:
+        try:
+            return int(metadata["width"]), int(metadata["height"])
+        except (ValueError, TypeError):
+            raise ValueError("Embedded PXL frame has invalid dimensions") from None
     dimensions = str(metadata.get("dimensions", ""))
     try:
         width_text, height_text = dimensions.lower().replace(" ", "").split("x", 1)

@@ -61,7 +61,7 @@ frame-number order, and must end exactly at index_offset.
 
 ## File header
 
-Python struct format: <4sHHIIHHIIQQI> (48 bytes).
+Python struct format: <4sHHIIHHIIQQI (48 bytes).
 
 | Offset | Size | Field | Required value / meaning |
 |---:|---:|---|---|
@@ -82,7 +82,7 @@ The CRC is computed over the first 44 bytes, excluding the CRC field itself.
 
 ## Frame record header
 
-Python struct format: <4sQqQI> (32 bytes).
+Python struct format: <4sQqQI (32 bytes).
 
 | Field | Meaning |
 |---|---|
@@ -98,7 +98,7 @@ match the enclosing PXV header.
 
 ## Index header
 
-Python struct format: <4sQII> (20 bytes).
+Python struct format: <4sQII (20 bytes).
 
 | Field | Meaning |
 |---|---|
@@ -109,7 +109,7 @@ Python struct format: <4sQII> (20 bytes).
 
 ## Index entry
 
-Python struct format: <qQQI> (28 bytes).
+Python struct format: <qQQI (28 bytes).
 
 | Field | Meaning |
 |---|---|
