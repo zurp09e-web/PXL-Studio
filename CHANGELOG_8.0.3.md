@@ -7,6 +7,7 @@
 - Reject PXL v8 reference-history groups longer than the encoder-supported maximum of 256 tiles.
 - Bound the aggregate size of PXL v7 high-precision embedded byte-plane archives. Plane archives are copied to temporary files in 1 MiB chunks rather than retained together in memory.
 - Revalidate the high-precision header and aggregate embedded lengths when the decoder reads the file.
+- Verify each embedded byte-plane archive's dimensions, channels and lossless profile against the outer image before invoking its decoder.
 
 ## Regression coverage
 
