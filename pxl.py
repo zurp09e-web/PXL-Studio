@@ -802,16 +802,18 @@ def _uvarint_bytes(value: int) -> bytes:
 
 def _read_uvarint_bytes(data: bytes, pos: int) -> tuple[int, int]:
     value = 0
-    shift = 0
-    for _ in range(5):
+    for i in range(5):
         if pos >= len(data):
             raise ValueError("Truncated PXL entropy table varint")
         b = data[pos]
         pos += 1
-        value |= (b & 0x7f) << shift
+        # This field is a uint32 varint: only four low bits are usable
+        # in its fifth byte.
+        if i == 4 and b > 0x0F:
+            raise ValueError("Overflowing PXL entropy table varint")
+        value |= (b & 0x7f) << (i * 7)
         if not (b & 0x80):
             return value, pos
-        shift += 7
     raise ValueError("Oversized PXL entropy table varint")
 
 
