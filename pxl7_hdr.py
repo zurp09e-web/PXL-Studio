@@ -488,6 +488,19 @@ def decompress(input_path, output_path, progress=None, backend="auto", workers=N
                         plane_stream.write(chunk)
                         remaining -= len(chunk)
 
+                # Validate the embedded archive header before handing it to
+                # the decoder. Otherwise a tiny outer plane entry could contain
+                # a PXL header requesting an image much larger than the outer
+                # high-precision image, causing an avoidable allocation spike.
+                plane_info = core.inspect(archive)
+                if (
+                    plane_info.get("width") != width
+                    or plane_info.get("height") != height
+                    or plane_info.get("channels") != channels
+                    or plane_info.get("profile") != "lossless"
+                ):
+                    raise ValueError("PXL v7 embedded byte-plane archive geometry/profile mismatch")
+
                 decompress_v6(archive, restored, progress=None, backend=backend, workers=workers)
                 with Image.open(restored) as image:
                     if image.size != (width, height):
