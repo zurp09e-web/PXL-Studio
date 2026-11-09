@@ -261,8 +261,8 @@ def _mixed_rans_blob_with_first_context(table: bytes) -> bytes:
 
 
 @pytest.mark.parametrize("table", [
-    b"\\x00" + (2049).to_bytes(2, "little") + (2048).to_bytes(2, "little")
-    + bytes(252 * 2),
+    b"\x00" + (2049).to_bytes(2, "little") + (2048).to_bytes(2, "little")
+    + bytes(254 * 2),
     b"\\x01\\x02\\x00\\x81\\x10\\x01\\x80\\x10",
 ], ids=["dense-frequency-overflow", "sparse-frequency-overflow"])
 def test_cpp_mixed_context_decoder_rejects_frequency_sum_overflow(table):
