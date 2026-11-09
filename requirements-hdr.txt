@@ -1,0 +1,2 @@
+# Optional OpenEXR import/export support
+OpenEXR>=3.3

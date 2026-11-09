@@ -1,0 +1,6 @@
+﻿image,v41_bytes,v42_bytes,v41_encode_ms,v42_encode_ms,v41_decode_ms,v42_decode_ms,encode_speedup,decode_speedup
+gradient,16220,16220,2877.2,324.9,673.9,43.8,8.86,15.39
+texture,4955,4955,3239.3,691.2,186.3,34.7,4.69,5.37
+photo_like,559937,559937,4469.3,1086.2,859.7,132.8,4.11,6.47
+random_noise,786524,786524,80.9,123.5,221.3,177.6,0.66,1.25
+block_mosaic,460,460,3179.4,660.9,154.9,85.6,4.81,1.81

@@ -1,0 +1,3 @@
+# Install after requirements.txt for JPEG XL codec support
+-r requirements.txt
+pillow-jxl-plugin>=1.3.0

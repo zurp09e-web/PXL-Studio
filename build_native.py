@@ -20,6 +20,8 @@ if SYSTEM == "Windows":
     if compiler is None:
         raise SystemExit("No C++ compiler found. Install Visual Studio Build Tools (C++ workload) or MinGW-w64.")
     if Path(compiler).name.lower() == "cl.exe":
+        # Keep ISA-specific code in separate translation units. The baseline
+        # dispatcher remains safe on older CPUs and calls only supported kernels.
         build_dir = ROOT / "native" / "build_msvc"
         build_dir.mkdir(parents=True, exist_ok=True)
         objects = []
@@ -29,6 +31,7 @@ if SYSTEM == "Windows":
             ("AVX512", ROOT / "native" / "pxl_v8_msvc_avx512.cpp", "PXL_HAS_MSVC_AVX512"),
         ):
             obj = build_dir / f"pxl_v8_msvc_{isa.lower()}.obj"
+            # Never let an object from an older build survive a failed compiler probe.
             obj.unlink(missing_ok=True)
             probe = [compiler, "/nologo", "/O2", "/std:c++17", "/EHsc", "/MD",
                      f"/arch:{isa}", "/c", str(source), f"/Fo:{obj}"]
@@ -50,7 +53,7 @@ elif SYSTEM == "Darwin":
     output = ROOT / "libpxl_native.dylib"
     compiler = shutil.which("clang++") or shutil.which("c++")
     if not compiler:
-        raise SystemExit("Install Xcode Command Line Tools to build the PXL native backend.")
+        raise SystemExit("Install Xcode Command Line Tools to build the PXL C++ backend.")
     cmd = [compiler, "-O3", "-std=c++17", "-dynamiclib", str(SRC), str(SRC_V8), "-o", str(output)]
 else:
     output = ROOT / "libpxl_native.so"
