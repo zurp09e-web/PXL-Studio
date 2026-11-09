@@ -20,3 +20,8 @@ recursive-include benchmarks_v80 *.py *.md *.csv
 include CHANGELOG_8.0.md
 include CHANGELOG_8.0.3.md
 include TESTING_8.0.md
+
+include pxv.py
+include PXV_FORMAT_SPEC.md
+include CHANGELOG_8.1.0.md
+include TESTING_PXV_1.0.md
