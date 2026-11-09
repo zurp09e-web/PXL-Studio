@@ -436,11 +436,27 @@ def decompress(input_path, output_path, progress=None, backend="auto", workers=N
             header = f.read(core.HEADER.size)
             if len(header) != core.HEADER.size:
                 raise ValueError("Truncated PXL v7 header")
-            _, _, _, channels, flags, width, height, tile_size, bytes_per_sample, plane_count = core.HEADER.unpack(header)
+            magic, version, profile, channels, flags, width, height, tile_size, bytes_per_sample, plane_count = core.HEADER.unpack(header)
             sample_code, color_transform = flags & 0x03, flags >> 2
-            if (width, height, channels) != (info["width"], info["height"], info["channels"]):
-                raise ValueError("PXL v7 header changed during decode")
+            expected_sample_code = {"uint16": SAMPLE_UINT16, "float16": SAMPLE_FLOAT16,
+                                    "float32": SAMPLE_FLOAT32}.get(info["sample_format"])
+            expected_bytes = {SAMPLE_UINT16: 2, SAMPLE_FLOAT16: 2, SAMPLE_FLOAT32: 4}.get(sample_code)
+            if (
+                magic != core.MAGIC or version != VERSION or profile != core.PROFILE_LOSSLESS
+                or (width, height, channels, tile_size) !=
+                   (info["width"], info["height"], info["channels"], info["tile_size"])
+                or sample_code != expected_sample_code or expected_bytes is None
+                or bytes_per_sample != expected_bytes or plane_count != expected_bytes
+                or color_transform not in (0, 1, 2, 3, 4)
+                or (color_transform and (sample_code != SAMPLE_UINT16 or channels < 3))
+            ):
+                raise ValueError("PXL v7 header changed or is invalid")
             shuffled = np.empty((height, width, channels, bytes_per_sample), dtype=np.uint8)
+            max_aggregate_bytes = (
+                width * height * channels * bytes_per_sample
+                + MAX_EMBEDDED_ARCHIVE_OVERHEAD
+            )
+            aggregate_bytes_read = 0
             for i in range(plane_count):
                 entry = f.read(PLANE_ENTRY.size)
                 if len(entry) != PLANE_ENTRY.size:
@@ -449,6 +465,9 @@ def decompress(input_path, output_path, progress=None, backend="auto", workers=N
                 max_plane_archive = width * height * channels + MAX_EMBEDDED_ARCHIVE_OVERHEAD
                 if length < 1 or length > max_plane_archive:
                     raise ValueError("PXL v7 embedded plane exceeds safety limit")
+                if length > max_aggregate_bytes - aggregate_bytes_read:
+                    raise ValueError("PXL v7 aggregate embedded planes exceed the decoded-image safety limit")
+                aggregate_bytes_read += length
 
                 # Copy one embedded archive to disk in bounded chunks. Keeping
                 # every compressed byte-plane in a Python list amplified peak
