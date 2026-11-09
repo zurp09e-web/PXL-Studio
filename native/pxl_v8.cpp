@@ -152,7 +152,17 @@ bool normalize(const std::array<uint64_t,256>& counts,std::array<uint16_t,256>& 
 }
 void varint(std::vector<uint8_t>& o,uint64_t v) { while(v>=128){o.push_back(uint8_t((v&127)|128));v>>=7;}o.push_back(uint8_t(v)); }
 bool read_varint(const uint8_t* d,uint32_t n,uint32_t& p,uint64_t& v) {
-    v=0;uint32_t shift=0;for(int i=0;i<10;++i){if(p>=n||shift>=64)return false;uint8_t b=d[p++];v|=uint64_t(b&127)<<shift;if(!(b&128))return true;shift+=7;}return false;
+    v=0;
+    for(uint32_t i=0;i<10;++i){
+        if(p>=n)return false;
+        const uint8_t b=d[p++];
+        // A uint64 varint has only one usable bit in its tenth byte.
+        // Reject continuation or payload bits before shifting by 63.
+        if(i==9&&(b&0xFEu))return false;
+        v|=uint64_t(b&0x7Fu)<<(i*7);
+        if(!(b&0x80u))return true;
+    }
+    return false;
 }
 std::vector<uint8_t> table_bytes(const std::array<uint16_t,256>& f) {
     std::vector<uint8_t> dense{0}; dense.reserve(513);
