@@ -2194,16 +2194,16 @@ def _write_svarint(out: bytearray, value: int) -> None:
 
 def _read_uvarint(data: bytes, pos: int) -> tuple[int, int]:
     value = 0
-    shift = 0
-    for _ in range(5):
+    for i in range(5):
         if pos >= len(data):
             raise ValueError("Truncated coefficient varint")
         b = data[pos]
         pos += 1
-        value |= (b & 0x7F) << shift
+        if i == 4 and b > 0x0F:
+            raise ValueError("Overflowing coefficient varint")
+        value |= (b & 0x7F) << (i * 7)
         if not (b & 0x80):
             return value, pos
-        shift += 7
     raise ValueError("Oversized coefficient varint")
 
 
