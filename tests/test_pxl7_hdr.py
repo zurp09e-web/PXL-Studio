@@ -208,5 +208,35 @@ class PXL7ModelTests(unittest.TestCase):
                 pxl7_hdr.inspect(archive)
 
 
+    def test_v7_decoder_rejects_embedded_plane_dimension_mismatch_before_decode(self):
+        width = height = 64
+        channels = 1
+        bytes_per_sample = 2
+        plane_count = 2
+        # A tiny nested PXL header advertises a huge decoded image. The outer
+        # dimensions must be checked before invoking the nested decoder.
+        oversized_plane = pxl.HEADER.pack(
+            pxl.MAGIC, engine.VERSION, pxl.PROFILE_LOSSLESS,
+            channels, 0, 32768, 32768, 64, 0, 0,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            archive = Path(td) / "mismatched-plane.pxl"
+            output = Path(td) / "restored.tif"
+            header = pxl.HEADER.pack(
+                pxl.MAGIC, pxl7_hdr.VERSION, pxl.PROFILE_LOSSLESS,
+                channels, SAMPLE_UINT16, width, height, 64,
+                bytes_per_sample, plane_count,
+            )
+            with archive.open("wb") as stream:
+                stream.write(header)
+                for _ in range(plane_count):
+                    stream.write(pxl7_hdr.PLANE_ENTRY.pack(len(oversized_plane), 0))
+                stream.write(oversized_plane)
+                stream.write(oversized_plane)
+
+            with self.assertRaisesRegex(ValueError, "geometry/profile mismatch"):
+                pxl7_hdr.decompress(archive, output, backend="cpu", workers=1)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
