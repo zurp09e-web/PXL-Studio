@@ -7,6 +7,17 @@ import pxl
 import pxl4_engine as v4
 
 
+def test_python_v8_varint_rejects_uint64_overflow_and_accepts_maximum():
+    maximum = bytes((0xFF,)) * 9 + bytes((0x01,))
+    value, position = v4._read_varint(maximum, 0)
+    assert value == (1 << 64) - 1
+    assert position == 10
+
+    malformed = bytes((0x80,)) * 9 + bytes((0x02,))
+    with pytest.raises(ValueError, match="Overflowing PXL v4 varint"):
+        v4._read_varint(malformed, 0)
+
+
 def run_roundtrip(array, mode, tile=64, workers=1):
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / 'source.png'
