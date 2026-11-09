@@ -2,6 +2,8 @@ import os
 import random
 import tempfile
 import unittest
+
+import pxl as pxl_core
 from pathlib import Path
 
 import numpy as np
@@ -299,6 +301,24 @@ class PXLTests(unittest.TestCase):
                     codecs.append(codec)
                     f.seek(n, 1)
             self.assertTrue(all(codec not in (1,) for codec in codecs))
+
+    def test_uint32_varint_readers_reject_overflow(self):
+        maximum = bytes((0xFF,)) * 4 + bytes((0x0F,))
+        self.assertEqual(pxl_core._read_uvarint_bytes(maximum, 0), ((1 << 32) - 1, 5))
+        self.assertEqual(pxl_core._read_uvarint(maximum, 0), ((1 << 32) - 1, 5))
+
+        malformed = bytes((0xFF,)) * 4 + bytes((0x10,))
+        with self.assertRaisesRegex(ValueError, "Overflowing PXL entropy table varint"):
+            pxl_core._read_uvarint_bytes(malformed, 0)
+        with self.assertRaisesRegex(ValueError, "Overflowing coefficient varint"):
+            pxl_core._read_uvarint(malformed, 0)
+
+        # Exercise the optional Numba token parser too when it is installed.
+        if pxl_core._numba_njit is not None:
+            tokens = np.frombuffer(bytes((0x80,)) * 9 + bytes((0x02,)), dtype=np.uint8)
+            _, _, error = pxl_core._run_read_varint_numba(tokens, 0)
+            self.assertEqual(error, -2)
+
 
     def test_transform_roundtrip_non_image_bytes(self):
         from pxl import _forward_color, _inverse_color
