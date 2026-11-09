@@ -49,11 +49,8 @@ jobs:
           -o libpxl_native.so
       - name: Run malformed native decoder tests under sanitizers
         env:
-          LD_PRELOAD: /usr/lib/gcc/x86_64-linux-gnu/$(gcc -dumpversion)/libasan.so
           ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: >
-          python -m pytest tests/test_native_cpp.py -q
-          -k "mixed_context_decoder_rejects_frequency_sum_overflow or
-          native_pixel_lz_rejects_uint64_varint_overflow or
-          native_variable_blocks_reject_uint64_varint_overflow"
+        run: |
+          export LD_PRELOAD="$(gcc -print-file-name=libasan.so)"
+          python -m pytest tests/test_native_cpp.py -q -k "mixed_context_decoder_rejects_frequency_sum_overflow or native_pixel_lz_rejects_uint64_varint_overflow or native_variable_blocks_reject_uint64_varint_overflow"
