@@ -25,6 +25,9 @@ SAMPLE_UINT16 = 1
 SAMPLE_FLOAT16 = 2
 SAMPLE_FLOAT32 = 3
 PLANE_ENTRY = struct.Struct("<QI")  # encoded PXL stream length, raw plane CRC32
+# Embedded byte-plane archives are at most their decoded byte count plus
+# container/tile-record overhead. Bound this allowance across all planes.
+MAX_EMBEDDED_ARCHIVE_OVERHEAD = 16 * 1024 * 1024
 
 
 def _read_tiff(path: Path):
@@ -412,6 +415,10 @@ def inspect(path):
         payload_bytes = sum(length for length, _ in entries)
         if payload_bytes != p.stat().st_size - core.HEADER.size - plane_count * PLANE_ENTRY.size:
             raise ValueError("PXL v7 plane sizes do not match file length")
+        decoded_sample_bytes = width * height * channels * bytes_per_sample
+        max_embedded_bytes = decoded_sample_bytes + MAX_EMBEDDED_ARCHIVE_OVERHEAD
+        if any(length < 1 for length, _ in entries) or payload_bytes > max_embedded_bytes:
+            raise ValueError("PXL v7 aggregate embedded planes exceed the decoded-image safety limit")
     return {"version": 7, "profile": "lossless", "width": width, "height": height,
             "channels": channels, "sample_format": {1: "uint16", 2: "float16", 3: "float32"}[sample_code],
             "color_transform": {0: "none", 1: "green", 2: "red", 3: "blue", 4: "YCoCg-R"}[transform],
@@ -429,7 +436,7 @@ def decompress(input_path, output_path, progress=None, backend="auto", workers=N
         entries = [PLANE_ENTRY.unpack(f.read(PLANE_ENTRY.size)) for _ in range(plane_count)]
         payloads = []
         for length, crc in entries:
-            max_plane_archive = core.MAX_PIXELS * channels + 64 * 1024 * 1024
+            max_plane_archive = width * height * channels + MAX_EMBEDDED_ARCHIVE_OVERHEAD
             if length < 1 or length > max_plane_archive:
                 raise ValueError("PXL v7 embedded plane exceeds safety limit")
             payload = f.read(length)
