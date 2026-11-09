@@ -225,13 +225,15 @@ inline void write_varint(std::vector<uint8_t>& out, uint64_t v) {
     out.push_back(uint8_t(v));
 }
 inline bool read_varint(const uint8_t* data, uint32_t n, uint32_t& pos, uint64_t& value) {
-    value=0; uint32_t shift=0;
-    for (int i=0;i<10;++i) {
-        if (pos>=n || shift>=64) return false;
+    value=0;
+    for (uint32_t i=0;i<10;++i) {
+        if (pos>=n) return false;
         const uint8_t b=data[pos++];
-        value |= uint64_t(b&127) << shift;
-        if (!(b&128)) return true;
-        shift += 7;
+        // A uint64 varint has only one usable bit in its tenth byte.
+        // Reject continuation or payload bits before shifting by 63.
+        if (i==9 && (b&0xFEu)) return false;
+        value |= uint64_t(b&0x7Fu) << (i*7);
+        if (!(b&0x80u)) return true;
     }
     return false;
 }
