@@ -1,0 +1,11 @@
+image,version,size_bytes,encode_seconds,pixel_exact
+gradient,v3,13417,0.4453,True
+gradient,v4,2429,1.6,True
+block_mosaic,v3,8964,0.2029,True
+block_mosaic,v4,1554,1.4686,True
+repeated_patch,v3,60772,0.1612,True
+repeated_patch,v4,5017,1.4542,True
+noise,v3,197492,0.0982,True
+noise,v4,196916,0.0129,True
+flat,v3,756,0.128,True
+flat,v4,756,0.1837,True

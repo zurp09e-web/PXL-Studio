@@ -1,0 +1,8 @@
+﻿codec,status,size_bytes,raw_bytes,source_bytes,ratio_raw,encode_ms,decode_ms,exact,psnr_db,ssim,target_mode,note
+BMP,OK,786486,786432,788088,1.0000686645507812,4.570477000015671,49.78966699991361,True,inf,1.0,RGB,Uncompressed bitmap baseline; alpha/grayscale normalized to RGB
+WebP lossless,OK,786512,786432,788088,1.0001017252604167,64.8932239998885,49.73918600012439,True,inf,1.0,RGB,"WebP lossless; exact comparison includes every RGBA channel, including hidden RGB under transparent pixels"
+PXL lossless,OK,786524,786432,788088,1.0001169840494792,40.74918100013747,92.5464889999148,True,inf,1.0,RGB,PXL v4.2; custom cross-tile tokens + native rANS; tile=256; effort=balanced
+TIFF Deflate,OK,787000,786432,788088,1.0007222493489583,21.673924999959127,49.075629999833836,True,inf,1.0,RGB,TIFF with Adobe Deflate; exact lossless
+PNG,OK,788088,786432,788088,1.002105712890625,53.57067399995685,62.39205800011405,True,inf,1.0,RGB,DEFLATE; exact lossless
+QOI,OK,1048061,786432,788088,1.3326784769694011,481.87432899999294,279.6626639999431,True,inf,1.0,RGB,Quite OK Image; grayscale input is expanded to RGB
+TIFF LZW,OK,1075064,786432,788088,1.3670145670572917,18.91736199991101,54.294268999910855,True,inf,1.0,RGB,TIFF with LZW; exact lossless
