@@ -1,4 +1,4 @@
-# Building PXL Studio 8.0.3
+# Building PXL Studio 8.1.0
 
 PXL Studio keeps its desktop application and image I/O layer in Python, while
 its default accelerated codec backend is a custom C++17 shared library.
@@ -98,3 +98,26 @@ with the new function table. On MSVC, the builder attempts separate AVX2 and
 AVX-512 translation units; unsupported compiler flags fall back to the best
 available lower ISA/scalar implementation. CMake enables AVX2 by default and
 has an optional `-DPXL_ENABLE_AVX512=ON` switch for AVX-512-capable toolchains.
+
+
+## PXV video support
+
+PXL image compression remains usable without FFmpeg. To import ordinary video files into .pxv or export PXV as Matroska/FFV1, install a system FFmpeg build that provides both ffmpeg and ffprobe on PATH.
+
+Check availability:
+
+```bash
+ffmpeg -version
+ffprobe -version
+```
+
+PXV's Python API and CLI are included in the same installation:
+
+```bash
+pxv encode input.mp4 output.pxv
+pxv info output.pxv
+pxv verify output.pxv --deep
+pxv decode output.pxv restored.mkv
+```
+
+The GUI exposes these operations in the PXV Video tab. PXV v1 is an intra-frame 8-bit format; HDR, temporal compression and audio remain future work. Read PXV_FORMAT_SPEC.md before implementing another PXV writer or reader.

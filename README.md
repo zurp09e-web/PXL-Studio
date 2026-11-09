@@ -1,4 +1,4 @@
-# PXL Studio 8.0.3 — Adaptive Lossless and High-Precision Image Codec
+# PXL Studio 8.1.0 — PXL Images + PXV Lossless Video
 
 PXL Studio is a Python/Tkinter image-compression workbench backed by a custom
 C++17 codec engine and a portable Python fallback. Python provides the GUI,
@@ -392,3 +392,34 @@ rebuilt. On Windows, run `py build_native.py` in a Visual Studio Developer
 Command Prompt. The builder compiles AVX2 and, when supported by the installed
 compiler, AVX-512 kernels in separate object files. Runtime CPU/OS checks choose
 the highest supported implementation or scalar fallback.
+
+
+## PXV v1 — lossless video
+
+PXL Studio 8.1.0 adds an experimental .pxv video stream. PXV v1 stores each video frame as an independent lossless PXL v8 image archive. The container records presentation timestamps and a CRC-protected frame index, allowing direct access to an individual frame without decoding earlier frames.
+
+Current PXV v1 scope:
+
+- Exact reconstruction of the normalized 8-bit frame samples stored in PXV.
+- Grayscale, RGB and RGBA frames.
+- Per-frame presentation timestamps in microseconds.
+- CRC32 checks for the PXV header, frame index and embedded PXL payloads.
+- Random frame access, sequential iteration and shallow/deep verification.
+- FFmpeg import and FFV1 Matroska export.
+
+PXV v1 is intentionally intra-frame. It does not yet implement motion estimation, temporal prediction, audio, subtitles, chapters, 10/12/16-bit samples, chroma subsampling controls, or HDR metadata. Those are later roadmap items. PTS values are retained in PXV; the current FFV1 export uses the stored nominal frame rate rather than reproducing variable-frame-rate timing exactly. FFmpeg converts source video to normalized RGB/RGBA/gray frames before PXL compression, so PXV preserves those decoded samples, not the original source bitstream, source codec, or container metadata.
+
+### Video requirements
+
+Install FFmpeg and ffprobe separately and ensure both commands are available on PATH. They are only needed for video-file import/export; the encode_frames, decode_frame, iter_frames, and verify APIs work with the Python dependencies already installed.
+
+### Video CLI
+
+```bash
+pxv encode input.mp4 output.pxv --effort balanced
+pxv info output.pxv
+pxv verify output.pxv --deep
+pxv decode output.pxv restored.mkv
+```
+
+The desktop application includes a PXV Video tab for encode, decode, inspect and checksum verification. See PXV_FORMAT_SPEC.md for the binary container layout and TESTING_PXV_1.0.md for validation commands.
