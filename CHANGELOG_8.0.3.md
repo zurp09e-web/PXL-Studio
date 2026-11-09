@@ -23,4 +23,7 @@ Valid PXL v1–v8 archives remain supported. PXL v8 files produced by the encode
 
 ## Validation status
 
-The regression tests have been added. A native C++ build and the complete test suite still need to be run on a build host before this patch should be treated as independently verified.
+- The native C++ backend compiled successfully in the Linux CI environment.
+- The targeted native malformed-input tests passed under AddressSanitizer and UndefinedBehaviorSanitizer (**4 passed**).
+- The first complete-suite run reached **85 passed, 2 skipped, 1 failed**. The failure was in the pre-existing uint16 RGB PNG test fixture, which had left PyPNG in its default grayscale mode while supplying RGB rows. The fixture was corrected to set `greyscale=False`.
+- A clean full-suite result after that fixture correction is still required before this patch can be considered fully verified.
