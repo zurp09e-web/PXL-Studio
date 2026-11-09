@@ -18,6 +18,14 @@ def test_python_v8_varint_rejects_uint64_overflow_and_accepts_maximum():
         v4._read_varint(malformed, 0)
 
 
+def test_numba_pixel_lz_varint_rejects_uint64_overflow_when_available():
+    if pxl._numba_njit is None:
+        pytest.skip("Numba is not installed")
+    malformed = np.frombuffer(bytes((0x80,)) * 9 + bytes((0x02,)), dtype=np.uint8)
+    _, _, error = v4._pixel_lz_read_varint(malformed, 0)
+    assert error == -2
+
+
 def run_roundtrip(array, mode, tile=64, workers=1):
     with tempfile.TemporaryDirectory() as td:
         src = Path(td) / 'source.png'
