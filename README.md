@@ -1,4 +1,4 @@
-# PXL Studio 8.0.2 — Adaptive Lossless and High-Precision Image Codec
+# PXL Studio 8.0.3 — Adaptive Lossless and High-Precision Image Codec
 
 PXL Studio is a Python/Tkinter image-compression workbench backed by a custom
 C++17 codec engine and a portable Python fallback. Python provides the GUI,
